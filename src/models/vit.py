@@ -20,12 +20,15 @@ class PatchEmbed(nn.Module):
     def __init__(self, img_size: int = 224, patch_size: int = 16, in_c: int = 3, dim: int = 384) -> None:
         super().__init__()
         self.num_patches = (img_size // patch_size) ** 2
-        # TODO: a single Conv2d with kernel_size=stride=patch_size, out=dim.
-        raise NotImplementedError("Level 2: implement PatchEmbed")
+        # Non-overlapping patch tokenizer: a conv whose kernel == stride == patch
+        # turns each patch_size x patch_size patch into one dim-dimensional token.
+        self.proj = nn.Conv2d(in_c, dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Output shape: (B, num_patches, dim)
-        raise NotImplementedError
+        # (B, 3, H, W) -> (B, dim, H/p, W/p) -> (B, num_patches, dim)
+        x = self.proj(x)
+        x = x.flatten(2).transpose(1, 2)
+        return x
 
 
 class MultiHeadSelfAttention(nn.Module):
@@ -36,17 +39,26 @@ class MultiHeadSelfAttention(nn.Module):
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
 
-        # TODO: qkv = Linear(dim, dim*3, bias=True); proj = Linear(dim, dim);
-        # attn_drop = Dropout(attn_drop); proj_drop = Dropout(proj_drop).
-        raise NotImplementedError("Level 2: implement MultiHeadSelfAttention")
+        self.qkv = nn.Linear(dim, dim * 3, bias=True)
+        self.proj = nn.Linear(dim, dim)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, N, D)
-        # 1) qkv projection -> reshape into (3, B, num_heads, N, head_dim)
-        # 2) attention = softmax(q @ k^T * scale)
-        # 3) out = attention @ v   -> reshape back to (B, N, D)
-        # 4) proj + proj_drop
-        raise NotImplementedError
+        B, N, D = x.shape
+        # qkv -> (B, N, 3, heads, head_dim) -> (3, B, heads, N, head_dim)
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale     # (B, heads, N, N)
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        out = attn @ v                                    # (B, heads, N, head_dim)
+        out = out.transpose(1, 2).reshape(B, N, D)        # (B, N, D)
+        out = self.proj(out)
+        return self.proj_drop(out)
 
 
 class TransformerBlock(nn.Module):
@@ -65,11 +77,10 @@ class TransformerBlock(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Pre-norm residual:
-        #   x = x + attn(norm1(x))
-        #   x = x + mlp(norm2(x))
-        # TODO
-        raise NotImplementedError("Level 2: implement TransformerBlock.forward")
+        # Pre-norm residual blocks (ViT convention).
+        x = x + self.attn(self.norm1(x))
+        x = x + self.mlp(self.norm2(x))
+        return x
 
 
 class ViT(nn.Module):

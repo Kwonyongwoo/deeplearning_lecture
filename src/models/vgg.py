@@ -27,16 +27,25 @@ VGG16_CFG = [
 def make_vgg_layers(cfg: list, batch_norm: bool = True) -> nn.Sequential:
     """Build the convolutional feature extractor from ``cfg``.
 
-    TODO: For each entry in cfg:
-      - "M": append nn.MaxPool2d(kernel_size=2, stride=2)
-      - int v: append Conv2d(in -> v, k=3, p=1) → (BN) → ReLU(inplace=True)
-    Return as nn.Sequential.
+    Hard-coded per the VGG paper (Simonyan & Zisserman, ICLR 2015, Table 1,
+    configuration D). Every conv uses 3x3 kernels with stride 1 and padding 1
+    (so the spatial size is preserved across a conv), and each "M" stage halves
+    the spatial size with a 2x2 stride-2 max pool. ReLU follows every conv;
+    the -BN variant inserts BatchNorm2d between conv and ReLU.
     """
     layers: list[nn.Module] = []
     in_channels = 3
 
-    # TODO: implement the loop described above.
-    raise NotImplementedError("Level 1: implement make_vgg_layers")
+    for v in cfg:
+        if v == "M":
+            layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+        else:
+            conv = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
+            if batch_norm:
+                layers += [conv, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+            else:
+                layers += [conv, nn.ReLU(inplace=True)]
+            in_channels = v
 
     return nn.Sequential(*layers)
 
@@ -51,13 +60,16 @@ class VGG16(nn.Module):
         # After 5 maxpool stages, 224x224 -> 7x7. Channels = 512.
         self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
 
-        # TODO: classifier MLP. The original VGG uses:
-        #   Linear(512*7*7, 4096) -> ReLU -> Dropout
-        #   Linear(4096, 4096)    -> ReLU -> Dropout
-        # Here we end at a 4096-dim feature vector and hand it to the
-        # multi-task head.
+        # Classifier MLP, hard-coded per the VGG paper (FC-4096 -> FC-4096).
+        # The original VGG ends with a third FC-1000 softmax layer; here we stop
+        # at the 4096-dim feature vector and hand it to the multi-task head.
         self.classifier = nn.Sequential(
-            # TODO: fill in
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
         )
 
         self.head = MultiTaskHead(in_features=4096, dropout=dropout)
